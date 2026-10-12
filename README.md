@@ -164,3 +164,9 @@ Deribit's own instrument names, case sensitive: `BTC-PERPETUAL`, `ETH-PERPETUAL`
 - `public/subscribe` is rate limited (about 3 requests per second, burst 10); the feed
   sends one subscribe per stream, so a resubscribe storm across many books could hit
   the limit.
+
+## CI
+
+CI installs the pinned siblings and the opam dependencies through the shared
+[ox-setup](https://github.com/winterchill-trading/infra/blob/main/docs/ci.md) action, which
+caches the built opam switch between runs.
