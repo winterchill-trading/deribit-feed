@@ -1,0 +1,39 @@
+(** A live {!Market_data.Feed.t} over Deribit's public JSON-RPC websocket. Read-only, no
+    credentials.
+
+    Each requested stream gets its own connection, so every frame is known to belong to
+    one stream before it is parsed. Per stream and symbol the channel is:
+
+    - [Trades]: [trades.<symbol>.<interval>]
+    - [Bbo]: [quote.<symbol>]
+    - [L2]: [book.<symbol>.<interval>] (full depth, sequenced by [change_id])
+    - [Funding]: [ticker.<symbol>.<interval>]
+
+    See {!Normalizer} for the field mapping. All of a connection's channels are subscribed
+    with one [public/subscribe] (the method is limited to about 3 requests per second).
+    Each connection sends [public/test] every 15 s as a keepalive, enables server
+    heartbeats ([public/set_heartbeat], 30 s) and answers [test_request]s.
+
+    [recv_ts] is [Time_ns.now ()] when the frame is received; [on_raw] gets the frame
+    unparsed, first, including responses and heartbeats. Undecodable frames and JSON-RPC
+    errors are logged and skipped.
+
+    On a disconnect the connection is re-established with exponential backoff
+    ({!Venue_net.Ws_client}); the stream's book state is dropped and the channels are
+    subscribed again, so the book restarts with a fresh [Snapshot]. A book gap
+    unsubscribes and resubscribes just that channel. Pipes of streams that were not
+    requested stay empty until [close]. Writes do not wait for readers. *)
+
+open! Core
+open Async
+
+(** Raises if a first connection fails, or if [streams] contains [Private]. *)
+val create
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> Market_data.Feed.t Deferred.t
+
+(** The channel subscribed for a stream and symbol. Raises for [Private]. *)
+val channel : Config.t -> Market_data.Stream.t -> string -> Wire.Channel.t
