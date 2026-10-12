@@ -14,9 +14,9 @@
     Each connection sends [public/test] every 15 s as a keepalive, enables server
     heartbeats ([public/set_heartbeat], 30 s) and answers [test_request]s.
 
-    [recv_ts] is [Time_ns.now ()] when the frame is received; [on_raw] gets the frame
-    unparsed, first, including responses and heartbeats. Undecodable frames and JSON-RPC
-    errors are logged and skipped.
+    [recv_ts] is the time source's [now] when the frame is received; [on_raw] gets the
+    frame unparsed, first, including responses and heartbeats. Undecodable frames and
+    JSON-RPC errors are logged and skipped.
 
     On a disconnect the connection is re-established with exponential backoff
     ({!Venue_net.Ws_client}); the stream's book state is dropped and the channels are
@@ -27,9 +27,13 @@
 open! Core
 open Async
 
-(** Raises if a first connection fails, or if [streams] contains [Private]. *)
+(** [time_source] (default the wall clock) stamps [recv_ts] and drives the keepalive, the
+    silence watchdog and the reconnection backoff, so tests can step them.
+
+    Raises if a first connection fails, or if [streams] contains [Private]. *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
@@ -41,6 +45,7 @@ type t
 (** Like {!create}, keeping the handle for {!stats}. *)
 val start
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
