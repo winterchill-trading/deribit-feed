@@ -16,6 +16,7 @@ ecosystem; built with the Jane Street stack.
   and resubscribes. `Live_feed.start` returns a handle whose `stats` count frames,
   parse errors and reconnects; `?time_source` (default the wall clock) stamps `recv_ts`
   and drives keepalives and reconnection backoff, so tests can step a synthetic clock.
+  `Live_feed.feed_with_gaps` is the same feed plus a `gaps` pipe (see below).
 - `Deribit_feed.Rebuild_normalizer`: the normalizer as a `Market_data.Normalizer.S`, for
   rebuilding event logs from market-recorder raw minutes.
 
@@ -108,6 +109,9 @@ recording as the fresh snapshot that followed it.
   a malformed frame is counted in `stats` and skipped, and a dropped connection is
   re-established on a synthetic clock (none before 0.39 s, reconnected and resubscribed
   by 0.6 s).
+- `test_live_feed_gaps.ml` checks the `gaps` pipe on a synthetic clock: a `change_id`
+  break and a dropped connection each write one `Resync` gap, counted before the next
+  book frame is even passed to `on_raw` (see below for the numbers).
 - `test_allocation.ml` prints minor words per message through `Tolerance.near`, which
   accepts the larger of 8 words or 3% so macOS and Linux runs agree.
 - `bench/main.exe` is a core_bench of `Normalizer.frame` on the fixture frames. On an
@@ -126,13 +130,45 @@ recording as the fresh snapshot that followed it.
 |---|---|---|---|
 | `trades` | `trades.<symbol>.100ms` | one `Trade` per print; side = taker `direction`, `exch_ts` = `timestamp` | yes |
 | `bbo` | `quote.<symbol>` | `Bbo` while both sides are present | yes |
-| `l2` | `book.<symbol>.100ms` | `Snapshot` (full depth, best first), then `Delta`s chained by `prev_change_id`; `delete` = size 0 | yes (no gap seen; gap path unit tested) |
+| `l2` | `book.<symbol>.100ms` | `Snapshot` (full depth, best first), then `Delta`s chained by `prev_change_id`; `delete` = size 0 | yes (no gap seen; gap path and its `Gap` record unit tested) |
 | `funding` | `ticker.<symbol>.100ms` | `Funding` with `rate = funding_8h`, on change of rate, mark or index | yes |
 | `private` | none | rejected: public data only | n/a |
 
 Keepalive: `public/test` every 15 s (verified live) plus `public/set_heartbeat` 30 s;
 `test_request` heartbeats are answered with `public/test` (unit tested; mainnet sent none
 while the client pinged on its own).
+
+## Gaps and what a reconnect loses
+
+`Live_feed.feed_with_gaps` reports every break as a `Market_data.Gap.t` with reason
+`Resync`, `venue = Deribit` and the stream set:
+
+- a reconnect of a stream's socket: `instrument = None` (every symbol of that socket),
+  written in `on_connect`, before the resubscribe and before any frame of the new
+  connection is read;
+- a book `change_id` break: `instrument` set, written before the unsubscribe and
+  subscribe for that one channel, so before its new snapshot.
+
+Deribit's public channels have no replay: whatever the server published between the
+drop and the new subscription is gone. Per stream:
+
+- `trades`: prints in the window are lost (no backfill from
+  `public/get_last_trades_by_instrument`; `trade_seq` would show the hole per
+  instrument but is not checked).
+- `l2`: the book is dropped and restarts from the server's fresh full-depth snapshot;
+  changes in the window are never seen, the snapshot already includes them.
+- `bbo`: `quote` is unsequenced, so missed quotes are simply absent; the next one is
+  current.
+- `funding`: the last values are forgotten, so the first ticker after the reconnect
+  emits a funding record even if nothing changed.
+
+Numbers from `test_live_feed_gaps.ml` (synthetic clock, local server): a socket dropped
+at t = 0.1 s reconnects after the first backoff (0.5 s with 20 % jitter; up by 0.7 s,
+none before 0.39 s in `test_live_feed_stats.ml`), the gap is stamped 0.7 s and the new
+snapshot follows it at 0.7 s, so about 0.6 s of data is lost on a first reconnect
+(backoff doubles on repeated failures). A `change_id` break at 0.1 s writes its gap at
+0.1 s and sends exactly one unsubscribe and one subscribe; changes are dropped until the
+snapshot, which on mainnet arrives within one round trip.
 
 ## Symbols
 
