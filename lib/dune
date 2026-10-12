@@ -1,0 +1,6 @@
+(library
+ (name deribit_feed)
+ (public_name deribit-feed)
+ (libraries core async venue-net market-data yojson uri)
+ (preprocess
+  (pps ppx_jane ppx_yojson_conv)))
