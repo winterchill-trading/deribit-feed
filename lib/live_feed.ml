@@ -16,7 +16,36 @@ let channel (config : Config.t) (stream : Md.Stream.t) instrument : Wire.Channel
 let ping_interval = Time_ns.Span.of_sec 15.
 let heartbeat_seconds = 30
 
-let create ?on_raw config ~symbols ~streams =
+type counters =
+  { mutable frames : int
+  ; mutable parse_errors : int
+  ; mutable clients : Ws_client.t list
+  }
+
+type t =
+  { feed : Md.Feed.t
+  ; counters : counters
+  }
+
+module Stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of]
+end
+
+let stats { counters = c; _ } : Stats.t =
+  { frames = c.frames
+  ; parse_errors = c.parse_errors
+  ; reconnects = List.sum (module Int) c.clients ~f:Ws_client.reconnects
+  }
+;;
+
+let feed t = t.feed
+
+let start ?on_raw config ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Deribit_feed.Live_feed.create: private is not a market feed"];
@@ -30,6 +59,7 @@ let create ?on_raw config ~symbols ~streams =
     | L2 x -> Pipe.write_without_pushback_if_open l2_w x
     | Funding x -> Pipe.write_without_pushback_if_open funding_w x
   in
+  let counters = { frames = 0; parse_errors = 0; clients = [] } in
   let next_id =
     let id = ref 0 in
     fun () ->
@@ -61,9 +91,11 @@ let create ?on_raw config ~symbols ~streams =
     in
     let handle frame =
       let recv_ts = Time_ns.now () in
+      counters.frames <- counters.frames + 1;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       match Normalizer.frame normalizer ~recv_ts frame with
       | Error error ->
+        counters.parse_errors <- counters.parse_errors + 1;
         Log.Global.error_s
           [%message
             "deribit feed: cannot handle frame"
@@ -92,7 +124,8 @@ let create ?on_raw config ~symbols ~streams =
       Monitor.try_with (fun () ->
         Deferred.List.iter streams ~how:`Sequential ~f:(fun stream ->
           let%map ws = connect stream in
-          opened := ws :: !opened))
+          opened := ws :: !opened;
+          counters.clients <- !opened))
     with
     | Ok () -> return ()
     | Error exn ->
@@ -108,11 +141,19 @@ let create ?on_raw config ~symbols ~streams =
       Pipe.close funding_w)
   in
   return
-    (module struct
-      let trades = trades_r
-      let bbo = bbo_r
-      let l2 = l2_r
-      let funding = funding_r
-      let close () = Lazy_deferred.force_exn closed
-    end : Md.Feed.S)
+    { counters
+    ; feed =
+        (module struct
+          let trades = trades_r
+          let bbo = bbo_r
+          let l2 = l2_r
+          let funding = funding_r
+          let close () = Lazy_deferred.force_exn closed
+        end : Md.Feed.S)
+    }
+;;
+
+let create ?on_raw config ~symbols ~streams =
+  let%map t = start ?on_raw config ~symbols ~streams in
+  feed t
 ;;
