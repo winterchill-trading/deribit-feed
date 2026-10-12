@@ -21,8 +21,17 @@
     On a disconnect the connection is re-established with exponential backoff
     ({!Venue_net.Ws_client}); the stream's book state is dropped and the channels are
     subscribed again, so the book restarts with a fresh [Snapshot]. A book gap
-    unsubscribes and resubscribes just that channel. Pipes of streams that were not
-    requested stay empty until [close]. Writes do not wait for readers. *)
+    unsubscribes and resubscribes just that channel.
+
+    Breaks are reported on {!feed_with_gaps}'s [gaps] pipe, always with reason [Resync],
+    [venue = Deribit] and the stream set:
+    - a reconnect of a stream's connection: [instrument = None] (every symbol of that
+      connection), written before any event of the new connection;
+    - a book [change_id] break that resubscribes a channel: [instrument] set, written
+      before the new snapshot.
+
+    Pipes of streams that were not requested stay empty until [close]. Writes do not wait
+    for readers. *)
 
 open! Core
 open Async
@@ -52,6 +61,9 @@ val start
   -> t Deferred.t
 
 val feed : t -> Market_data.Feed.t
+
+(** The same feed with its [gaps] pipe (see above). *)
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t
 
 module Stats : sig
   type t =

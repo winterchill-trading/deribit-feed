@@ -13,6 +13,14 @@ let channel (config : Config.t) (stream : Md.Stream.t) instrument : Wire.Channel
   | Private -> raise_s [%message "Deribit_feed.Live_feed: no public channel for private"]
 ;;
 
+let channel_instrument : Wire.Channel.t -> Md.Instrument.t option = function
+  | Trades { instrument; _ }
+  | Quote instrument
+  | Book { instrument; _ }
+  | Ticker { instrument; _ } -> Some (Normalizer.instrument instrument)
+  | Other _ -> None
+;;
+
 let ping_interval = Time_ns.Span.of_sec 15.
 let heartbeat_seconds = 30
 
@@ -23,7 +31,7 @@ type counters =
   }
 
 type t =
-  { feed : Md.Feed.t
+  { feed : Md.Feed.With_gaps.t
   ; counters : counters
   }
 
@@ -43,7 +51,8 @@ let stats { counters = c; _ } : Stats.t =
   }
 ;;
 
-let feed t = t.feed
+let feed t = Md.Feed.With_gaps.to_feed t.feed
+let feed_with_gaps t = t.feed
 
 let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
@@ -53,6 +62,17 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
   let bbo_r, bbo_w = Pipe.create () in
   let l2_r, l2_w = Pipe.create () in
   let funding_r, funding_w = Pipe.create () in
+  let gaps_r, gaps_w = Pipe.create () in
+  let gap ~stream ?instrument () =
+    Pipe.write_without_pushback_if_open
+      gaps_w
+      { Md.Gap.recv_ts = Time_source.now time_source
+      ; venue = Deribit
+      ; instrument
+      ; stream = Some stream
+      ; reason = Resync
+      }
+  in
   let emit : Md.Event.t -> unit = function
     | Trade x -> Pipe.write_without_pushback_if_open trades_w x
     | Bbo x -> Pipe.write_without_pushback_if_open bbo_w x
@@ -70,10 +90,13 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
     let name = Md.Stream.to_string stream in
     let channels = List.map symbols ~f:(channel config stream) in
     let normalizer = Normalizer.create () in
+    (* [Ws_client] calls [on_connect] synchronously before it reads the new connection's
+       first frame, so a gap written here precedes every event of that connection. *)
     let on_connect ws =
       if Ws_client.reconnects ws > 0
       then (
         Log.Global.info "deribit feed: %s reconnected, resubscribing" name;
+        gap ~stream ();
         Normalizer.reset normalizer);
       let%bind () =
         Ws_client.send ws (Wire.set_heartbeat ~id:(next_id ()) ~seconds:heartbeat_seconds)
@@ -109,6 +132,7 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
           | Answer_test_request ->
             don't_wait_for (Ws_client.send ws (Wire.test ~id:(next_id ())))
           | Resubscribe channel ->
+            gap ~stream ?instrument:(channel_instrument channel) ();
             don't_wait_for
               (let%bind () =
                  Ws_client.send ws (Wire.unsubscribe ~id:(next_id ()) [ channel ])
@@ -139,7 +163,8 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
       Pipe.close trades_w;
       Pipe.close bbo_w;
       Pipe.close l2_w;
-      Pipe.close funding_w)
+      Pipe.close funding_w;
+      Pipe.close gaps_w)
   in
   return
     { counters
@@ -149,8 +174,9 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
           let bbo = bbo_r
           let l2 = l2_r
           let funding = funding_r
+          let gaps = gaps_r
           let close () = Lazy_deferred.force_exn closed
-        end : Md.Feed.S)
+        end : Md.Feed.With_gaps.S)
     }
 ;;
 
