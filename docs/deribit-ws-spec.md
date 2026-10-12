@@ -69,7 +69,7 @@ No interval; one notification per top-of-book change.
          "timestamp":1550658624149}}}
 ```
 
-An empty side has a `null` (or `0`) price and amount `0`.
+An empty side is expected to have a `null` price and amount `0` (not observed live on BTC-PERPETUAL); the feed treats either as empty.
 
 ### Order book: `book.{instrument_name}.{interval}`
 
