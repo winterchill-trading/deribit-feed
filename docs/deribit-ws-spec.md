@@ -159,3 +159,19 @@ answers any `test_request` with `public/test`.
 
 `BTC-PERPETUAL`, `ETH-PERPETUAL`; linear USDC perpetuals are `BTC_USDC-PERPETUAL`;
 futures `BTC-27DEC24`; options `BTC-27DEC24-60000-C`. Names are case sensitive.
+
+## Observed on mainnet (2026-10-12)
+
+- Subscribe and `set_heartbeat` responses: `{"result":"ok"}` for `set_heartbeat`, the
+  channel list for `public/subscribe`; both carry `usIn`/`usOut`/`usDiff`/`testnet`.
+- Trades carry extra fields not in the docs: `starbase_match_id` and
+  `starbase_timestamp` (nanoseconds). Numbers sometimes use exponent notation
+  (`"price":8.29e4`), so decoders must accept any JSON number.
+- The book snapshot's `timestamp` is the time of the last book change, which can be
+  some 300 ms before the subscribe.
+- With the client sending `public/test` every 15 s, no `heartbeat`/`test_request`
+  messages arrived within 75 s.
+
+```json
+{"jsonrpc":"2.0","method":"subscription","params":{"channel":"trades.BTC-PERPETUAL.100ms","data":[{"timestamp":1791809299339,"price":82901.5,"amount":2030.0,"direction":"sell","index_price":82875.54,"instrument_name":"BTC-PERPETUAL","trade_seq":305148044,"mark_price":82902.84,"tick_direction":2,"starbase_match_id":235383079416377344,"trade_id":"451454281","contracts":203.0,"starbase_timestamp":1791809299339195504}]}}
+```
