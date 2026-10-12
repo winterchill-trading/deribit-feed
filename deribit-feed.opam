@@ -20,6 +20,7 @@ depends: [
   "ppx_yojson_conv"
   "yojson"
   "uri"
+  "core_bench" {with-test}
   "odoc" {with-doc}
 ]
 build: [

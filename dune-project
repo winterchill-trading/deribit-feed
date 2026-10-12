@@ -30,4 +30,5 @@
   ppx_jane
   ppx_yojson_conv
   yojson
-  uri))
+  uri
+  (core_bench :with-test)))

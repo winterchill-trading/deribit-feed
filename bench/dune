@@ -1,0 +1,29 @@
+(executable
+ (name main)
+ (libraries core core_unix.command_unix core_bench market-data deribit-feed)
+ (preprocess
+  (pps ppx_jane)))
+
+; The recorded minute from test/fixtures, embedded as strings.
+
+(rule
+ (target frames.ml)
+ (deps
+  (source_tree ../test/fixtures/raw))
+ (action
+  (with-stdout-to
+   frames.ml
+   (progn
+    (echo "let trades = {json|")
+    (cat
+     ../test/fixtures/raw/deribit/trades/BTC-PERPETUAL/2026/10/12/16-54.ndjson)
+    (echo "|json}\nlet bbo = {json|")
+    (cat
+     ../test/fixtures/raw/deribit/bbo/BTC-PERPETUAL/2026/10/12/16-54.ndjson)
+    (echo "|json}\nlet l2 = {json|")
+    (cat
+     ../test/fixtures/raw/deribit/l2/BTC-PERPETUAL/2026/10/12/16-54.ndjson)
+    (echo "|json}\nlet funding = {json|")
+    (cat
+     ../test/fixtures/raw/deribit/funding/BTC-PERPETUAL/2026/10/12/16-54.ndjson)
+    (echo "|json}\n")))))
