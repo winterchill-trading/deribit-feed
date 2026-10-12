@@ -1,0 +1,8 @@
+(library
+ (name deribit_feed_test)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (libraries core deribit-feed market-data yojson)
+ (preprocess
+  (pps ppx_jane)))
