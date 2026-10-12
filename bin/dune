@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name deribit-feed)
+ (package deribit-feed)
+ (libraries core async core_unix.command_unix deribit-feed market-data uri)
+ (preprocess
+  (pps ppx_jane)))
