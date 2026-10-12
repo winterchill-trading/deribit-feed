@@ -81,6 +81,10 @@ let feed_command =
 ;;
 
 let () =
-  Command.group ~summary:"Read-only Deribit public market data" [ "feed", feed_command ]
+  Command.group
+    ~summary:"Read-only Deribit public market data"
+    [ "feed", feed_command
+    ; "rebuild-norm", Market_data.Rebuild_norm.command [ (module Rebuild_normalizer) ]
+    ]
   |> Command_unix.run
 ;;
