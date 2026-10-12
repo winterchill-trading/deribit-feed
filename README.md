@@ -13,7 +13,11 @@ ecosystem; built with the Jane Street stack.
 - `Deribit_feed.Normalizer`: pure frame -> event conversion with per-instrument book
   sequencing.
 - `Deribit_feed.Live_feed.create`: the live `Feed.t`, one socket per stream, reconnects
-  and resubscribes.
+  and resubscribes. `Live_feed.start` returns a handle whose `stats` count frames,
+  parse errors and reconnects; `?time_source` (default the wall clock) stamps `recv_ts`
+  and drives keepalives and reconnection backoff, so tests can step a synthetic clock.
+- `Deribit_feed.Rebuild_normalizer`: the normalizer as a `Market_data.Normalizer.S`, for
+  rebuilding event logs from market-recorder raw minutes.
 
 The protocol notes are in [docs/deribit-ws-spec.md](docs/deribit-ws-spec.md).
 
@@ -73,6 +77,48 @@ Timestamps print in the local zone (UTC+1 here). In 10 seconds the run produced 
 trades, 100 BBOs, 30 L2 messages and 14 funding records, with no decode errors; a
 75-second L2 run applied 226 messages without a sequence gap. A combined run on
 `BTC-PERPETUAL,ETH-PERPETUAL` with all four streams also worked.
+
+## Rebuilding event logs
+
+`deribit-feed rebuild-norm -data-dir DIR -out NEW_DIR -date YYYY-MM-DD` is
+`Market_data.Rebuild_norm` with `Rebuild_normalizer`: it reads the recorder's
+`raw/deribit/<stream>/<symbol>/...` minutes of the day and writes event logs. On the
+checked-in fixture minute:
+
+```
+$ deribit-feed rebuild-norm -data-dir test/fixtures -out /tmp/norm -date 2026-10-12
+((files 4) (frames 320) (disconnects 0) (events 370) (frame_errors 0)
+ (first_errors ()) (skipped_files 0) (skipped_venues ()))
+```
+
+Over the untrimmed three-minute recording the fixture came from (12 files, 3311 frames,
+4 disconnects when the recorder stopped) it wrote 3613 events with no rejected frame.
+`Resubscribe` and `test_request` outputs are dropped offline: a resubscribe shows up in a
+recording as the fresh snapshot that followed it.
+
+## Tests and benchmark
+
+- `test/fixtures/raw/deribit/<stream>/BTC-PERPETUAL/2026/10/12/16-54.ndjson`: the first
+  20 to 200 frames per stream of a market-recorder minute on mainnet (240 KB in all),
+  starting with the subscription responses; the `l2` file has the full-depth snapshot
+  then 37 changes. `test_fixtures.ml` normalizes every frame (98 trades, 198 BBOs, 1
+  snapshot and 37 deltas, 36 funding records, no errors) and `test_rebuild_norm.ml`
+  rebuilds them into a temporary directory and reads the event logs back.
+- `test_live_feed_stats.ml` runs `Live_feed` against a scripted local websocket server:
+  a malformed frame is counted in `stats` and skipped, and a dropped connection is
+  re-established on a synthetic clock (none before 0.39 s, reconnected and resubscribed
+  by 0.6 s).
+- `test_allocation.ml` prints minor words per message through `Tolerance.near`, which
+  accepts the larger of 8 words or 3% so macOS and Linux runs agree.
+- `bench/main.exe` is a core_bench of `Normalizer.frame` on the fixture frames. On an
+  M-series Mac (`-quota 3`):
+
+| Benchmark | Time/run | Minor words/run |
+|---|---|---|
+| trades (per frame, 1660 bytes avg, several prints) | 15.0 us | 1783 |
+| bbo (per frame) | 2.3 us | 381 |
+| funding (per ticker frame) | 6.2 us | 775 |
+| l2 replay (40 frames incl. a full-depth snapshot) | 1.54 ms | 345 k |
 
 ## Coverage
 
