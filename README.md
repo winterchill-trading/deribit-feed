@@ -124,6 +124,32 @@ recording as the fresh snapshot that followed it.
 | funding (per ticker frame) | 6.2 us | 775 |
 | l2 replay (40 frames incl. a full-depth snapshot) | 1.54 ms | 345 k |
 
+### Websocket delivery
+
+`Live_feed` takes frames from `Venue_net.Ws_client` through `on_message`, so each frame
+goes from the connection's frame pipe straight to the normalizer. Before, it read
+`Ws_client.messages` one frame at a time with `Pipe.iter_without_pushback`, which costs
+about 13 words per frame for the hop (see venue-net's README); that path is kept as
+`Live_feed.For_testing.start_via_messages`.
+
+`dune exec ./bench/live.exe` writes the 20 recorded trades frames 500 times (10,000
+frames) as pre-encoded websocket frames from the in-process fake server in one burst, and
+counts minor words over the whole receive phase (socket reads, framing, delivery,
+`Normalizer.frame`, pipe writes). arm64, best of 10 runs:
+
+| Build | messages pipe (before) | `on_message` |
+| --- | --- | --- |
+| dev | 16.3 us, 1899.7 to 1900.0 words | 16.4 us, 1886.5 words |
+| release | 16.1 to 16.6 us, 1896.4 words | 16.3 to 16.6 us, 1883.1 words |
+| release, `OCAMLPARAM='_,O3=1'` | 16.3 us, 1854.4 words | 16.2 us, 1841.2 words |
+
+The JSON decode of these large trades frames dominates, so the time difference is inside
+the noise; the 13 words per frame are exact. `test/test_delivery.ml` runs both deliveries
+over every recorded stream and requires identical events, gaps and stats (gap ordering is
+covered by `test_live_feed_gaps.ml`, which now runs on `on_message`), and pins the words
+per trades frame end to end (dev profile: about 1998 before, 1985 now; a few words of
+slack for Linux CI).
+
 ## Coverage
 
 | Stream | Deribit channel | Mapping | Verified live |
