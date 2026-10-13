@@ -122,10 +122,10 @@ let%expect_test "on_message and the messages pipe give the same output on every 
   in
   [%expect
     {|
-    ((stream Trades) (frames 155) (same true) (events (212 0 0 0 0)))
-    ((stream Bbo) (frames 158) (same true) (events (0 148 0 0 0)))
-    ((stream L2) (frames 553) (same true) (events (0 0 545 0 0)))
-    ((stream Funding) (frames 64) (same true) (events (0 0 0 19 0)))
+    ((stream Trades) (frames 20) (same true) (events (98 0 0 0 0)))
+    ((stream Bbo) (frames 200) (same true) (events (0 198 0 0 0)))
+    ((stream L2) (frames 40) (same true) (events (0 0 38 0 0)))
+    ((stream Funding) (frames 60) (same true) (events (0 0 0 36 0)))
     |}]
 ;;
 
@@ -163,16 +163,16 @@ let%expect_test "words per trades frame, end to end" =
   Log.Global.set_output [];
   let%bind old = words_per_frame via_messages in
   let%bind new_ = words_per_frame on_message in
-  (* arm64 macOS, dev profile: 1043.8 to 1044.3 and 1031.3 to 1031.5, mostly the JSON
+  (* arm64 macOS, dev profile: 1997.9 to 1998.2 and 1984.6 to 1984.7, mostly the JSON
      decode of trades frames. The totals carry the socket and framing work, so they get a
      few words of slack for Linux CI; the saving is the pipe hop, about 13 words per frame
      on every platform (venue-net's README). *)
   print_s
     [%message
       ""
-        ~via_messages:(approx ~expected:1044. ~tolerance:8. old : string)
-        ~on_message:(approx ~expected:1031. ~tolerance:8. new_ : string)
+        ~via_messages:(approx ~expected:1998. ~tolerance:8. old : string)
+        ~on_message:(approx ~expected:1985. ~tolerance:8. new_ : string)
         ~saved:(approx ~expected:13. ~tolerance:1. (old -. new_) : string)];
-  [%expect {| ((via_messages ~1044) (on_message ~1031) (saved ~13)) |}];
+  [%expect {| ((via_messages ~1998) (on_message ~1985) (saved ~13)) |}];
   return ()
 ;;
