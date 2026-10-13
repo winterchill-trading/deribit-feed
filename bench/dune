@@ -1,6 +1,13 @@
-(executable
- (name main)
- (libraries core core_unix.command_unix core_bench market-data deribit-feed)
+(executables
+ (names main live)
+ (libraries
+  core
+  core_unix.command_unix
+  core_bench
+  async
+  market-data
+  deribit-feed
+  deribit_feed_test)
  (preprocess
   (pps ppx_jane)))
 
