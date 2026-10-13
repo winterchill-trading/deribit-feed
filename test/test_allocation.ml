@@ -12,6 +12,8 @@ let words f =
   Gc.minor_words () - before
 ;;
 
+(* Pinned counts. [Tolerance.near] accepts the larger of 8 words or 3%, so macOS and
+   Linux runs agree. *)
 (* Expected words per frame and the largest frame's words, per stream. The L2 maximum is
    the full-depth snapshot. *)
 let expected : Market_data.Stream.t -> int * int = function
