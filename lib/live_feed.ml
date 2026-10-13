@@ -54,7 +54,14 @@ let stats { counters = c; _ } : Stats.t =
 let feed t = Md.Feed.With_gaps.to_feed t.feed
 let feed_with_gaps t = t.feed
 
-let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~streams =
+let start_with
+  ~via_messages
+  ?on_raw
+  ?(time_source = Time_source.wall_clock ())
+  config
+  ~symbols
+  ~streams
+  =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Deribit_feed.Live_feed.create: private is not a market feed"];
@@ -92,7 +99,11 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
     let normalizer = Normalizer.create () in
     (* [Ws_client] calls [on_connect] synchronously before it reads the new connection's
        first frame, so a gap written here precedes every event of that connection. *)
+    (* The client frames arrive on, set by [on_connect], which runs before the first frame
+       of every connection. *)
+    let current = ref None in
     let on_connect ws =
+      current := Some ws;
       if Ws_client.reconnects ws > 0
       then (
         Log.Global.info "deribit feed: %s reconnected, resubscribing" name;
@@ -103,43 +114,51 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
       in
       Ws_client.send ws (Wire.subscribe ~id:(next_id ()) channels)
     in
+    let handle frame =
+      match !current with
+      | None -> ()
+      | Some ws ->
+        let recv_ts = Time_source.now time_source in
+        counters.frames <- counters.frames + 1;
+        Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
+        (match Normalizer.frame normalizer ~recv_ts frame with
+         | Error error ->
+           counters.parse_errors <- counters.parse_errors + 1;
+           Log.Global.error_s
+             [%message
+               "deribit feed: cannot handle frame"
+                 ~stream:name
+                 (frame : string)
+                 (error : Error.t)]
+         | Ok outputs ->
+           List.iter outputs ~f:(function
+             | Event event -> emit event
+             | Answer_test_request ->
+               don't_wait_for (Ws_client.send ws (Wire.test ~id:(next_id ())))
+             | Resubscribe channel ->
+               gap ~stream ?instrument:(channel_instrument channel) ();
+               don't_wait_for
+                 (let%bind () =
+                    Ws_client.send ws (Wire.unsubscribe ~id:(next_id ()) [ channel ])
+                  in
+                  Ws_client.send ws (Wire.subscribe ~id:(next_id ()) [ channel ]))))
+    in
+    (* [on_message] hands each frame over with no pipe in between; reading [messages] one
+       frame at a time cost about 13 words per frame more (see venue-net's README). The
+       pipe path is kept for [For_testing.start_via_messages]. *)
     let%map ws =
       Ws_client.connect
         ~ping:(`Text (Wire.test ~id:0, ping_interval))
         ~on_connect
+        ?on_message:(if via_messages then None else Some handle)
         ~log_name:("deribit " ^ name)
         ~time_source
         ~url:config.url
         ()
       >>| Or_error.ok_exn
     in
-    let handle frame =
-      let recv_ts = Time_source.now time_source in
-      counters.frames <- counters.frames + 1;
-      Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-      match Normalizer.frame normalizer ~recv_ts frame with
-      | Error error ->
-        counters.parse_errors <- counters.parse_errors + 1;
-        Log.Global.error_s
-          [%message
-            "deribit feed: cannot handle frame"
-              ~stream:name
-              (frame : string)
-              (error : Error.t)]
-      | Ok outputs ->
-        List.iter outputs ~f:(function
-          | Event event -> emit event
-          | Answer_test_request ->
-            don't_wait_for (Ws_client.send ws (Wire.test ~id:(next_id ())))
-          | Resubscribe channel ->
-            gap ~stream ?instrument:(channel_instrument channel) ();
-            don't_wait_for
-              (let%bind () =
-                 Ws_client.send ws (Wire.unsubscribe ~id:(next_id ()) [ channel ])
-               in
-               Ws_client.send ws (Wire.subscribe ~id:(next_id ()) [ channel ])))
-    in
-    don't_wait_for (Pipe.iter_without_pushback (Ws_client.messages ws) ~f:handle);
+    if via_messages
+    then don't_wait_for (Pipe.iter_without_pushback (Ws_client.messages ws) ~f:handle);
     ws
   in
   let opened = ref [] in
@@ -179,6 +198,12 @@ let start ?on_raw ?(time_source = Time_source.wall_clock ()) config ~symbols ~st
         end : Md.Feed.With_gaps.S)
     }
 ;;
+
+let start = start_with ~via_messages:false
+
+module For_testing = struct
+  let start_via_messages = start_with ~via_messages:true
+end
 
 let create ?on_raw ?time_source config ~symbols ~streams =
   let%map t = start ?on_raw ?time_source config ~symbols ~streams in
