@@ -38,8 +38,11 @@ let reset t =
 
 let instrument name = Md.Instrument.create Deribit name
 let time ms = Time_ns.of_span_since_epoch (Time_ns.Span.of_int_ms ms)
-let price = Md.Price.of_float
-let size = Md.Size.of_float
+
+(* Deribit sends prices and amounts as JSON numbers, which the wire types decode as
+   floats, so there is no decimal text to parse. *)
+let price = (Md.Price.of_float [@alert "-lossy"])
+let size = (Md.Size.of_float [@alert "-lossy"])
 let funding_interval = Time_ns.Span.of_hr 8.
 
 let next_funding_time time =
